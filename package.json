@@ -1,0 +1,37 @@
+{
+  "name": "runup",
+  "version": "0.1.0",
+  "description": "One-shot pre-merge check: base vs head, only the screens that changed, one report.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "runup": "bin/runup.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node --test test/e2e/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chaehy5665/runup.git"
+  },
+  "dependencies": {
+    "picomatch": "^4.0.7",
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.63.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0"
+  }
+}

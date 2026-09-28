@@ -1,0 +1,8 @@
+:root { color-scheme: light dark; --bg: #ffffff; --ink: #1b1d22; --brand: #3b5bdb; }
+@media (prefers-color-scheme: dark) { :root { --bg: #111318; --ink: #e9ebf0; --brand: #8ea2ff; } }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+nav { display: flex; gap: 16px; padding: 12px 20px; border-bottom: 1px solid #8884; }
+nav a { color: var(--brand); text-decoration: none; }
+main { padding: 24px 20px; max-width: 720px; }
+.card { border: 1px solid #8886; border-radius: 12px; padding: 16px; margin: 12px 0; }
+.clock { font-variant-numeric: tabular-nums; }
