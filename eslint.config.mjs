@@ -5,7 +5,13 @@ export default [
   { ignores: ['node_modules/', '.runup/', 'output/', 'test/fixtures/'] },
   js.configs.recommended,
   {
-    files: ['**/*.mjs', '**/*.js'],
+    // Injected into pages by `runup live`: a classic browser script.
+    files: ['src/live/agent.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: { ...globals.browser } },
+    rules: { 'no-unused-vars': ['error', { caughtErrors: 'none' }] },
+  },
+  {
+    files: ['**/*.mjs', 'examples/**/*.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: { ...globals.node } },
     rules: {
       'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', destructuredArrayIgnorePattern: '^_' }],

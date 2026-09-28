@@ -57,7 +57,12 @@ http
       res.writeHead(404, { 'content-type': 'text/html' });
       return res.end('<!doctype html><h1>Not found</h1>');
     }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    // Like many production apps, refuse to be framed. `runup live` strips these in its local proxy only.
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'x-frame-options': 'DENY',
+      'content-security-policy': "frame-ancestors 'none'; default-src 'self' 'unsafe-inline'; frame-src https:",
+    });
     res.end(render(hit));
   })
   .listen(port, '127.0.0.1', () => console.log(`mini-app on http://127.0.0.1:${port}`));

@@ -3,8 +3,10 @@ import { parseArgs } from 'node:util';
 import { plan, runup } from '../src/run.mjs';
 
 const HELP = `runup <base-ref> <head-ref> [options]
+runup live <base-ref> <head-ref> [options]
 
 Compare the web app at two git refs and write one report of only what changed.
+\`live\` opens both versions side by side instead, mirroring scroll, clicks, input, keys and navigation.
 
 Options
   -C, --cwd <dir>          target repository (default: current directory)
@@ -21,6 +23,12 @@ Options
       --keep-worktrees     keep the base/head worktrees for the next run (setup is skipped on reuse)
       --keep-all           keep images of unchanged cuts too
       --fail-on <what>     exit 2 when there is an "unexpected" change, any "change", or an "error"
+
+Live options
+      --port <n>           compare page port (default: config live.port, 4545)
+      --report <path>      report folder or report.json for diff boxes (default: the run for these commits)
+      --split-ports        serve base and head on <port>+1 and <port>+2 instead of base./head.localhost
+      --real-clock         do not start the page clock at capture.freezeTime
   -h, --help               show this help
 `;
 
@@ -44,6 +52,10 @@ try {
       'keep-worktrees': { type: 'boolean' },
       'keep-all': { type: 'boolean' },
       'fail-on': { type: 'string' },
+      port: { type: 'string' },
+      report: { type: 'string' },
+      'split-ports': { type: 'boolean' },
+      'real-clock': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -52,7 +64,9 @@ try {
   process.exit(64);
 }
 
-const { values: v, positionals } = args;
+const { values: v } = args;
+const isLive = args.positionals[0] === 'live';
+const positionals = isLive ? args.positionals.slice(1) : args.positionals;
 if (v.help || positionals.length !== 2) {
   process.stdout.write(HELP);
   process.exit(v.help ? 0 : 64);
@@ -79,7 +93,17 @@ const opts = {
 };
 
 try {
-  if (v.plan) {
+  if (isLive) {
+    const { startLive } = await import('../src/live/server.mjs');
+    const live = await startLive({ ...opts, port: v.port, report: v.report, splitPorts: v['split-ports'], realClock: v['real-clock'] });
+    console.log(`runup live: ${live.url}`);
+    console.log(live.hosts === 'ports'
+      ? `ssh -L ${live.port}:127.0.0.1:${live.port} -L ${live.port + 1}:127.0.0.1:${live.port + 1} -L ${live.port + 2}:127.0.0.1:${live.port + 2} <this host>`
+      : `ssh -L ${live.port}:127.0.0.1:${live.port} <this host>   # then open ${live.url}`);
+    console.log(live.report ? 'diff boxes: from the report for these commits' : 'diff boxes: off (no report for these commits; run runup first)');
+    console.log('Ctrl-C to stop');
+    await new Promise(() => {}); // runs until SIGINT/SIGTERM; startLive cleans up and exits
+  } else if (v.plan) {
     const p = await plan(opts);
     const out = {
       base: { ref: opts.base, sha: p.baseSha },

@@ -4,11 +4,12 @@ import { captureAll, planCuts } from './capture.mjs';
 import { compareCuts } from './results.mjs';
 import { loadConfig } from './config.mjs';
 import { discoverNextApp } from './discover/next-app.mjs';
-import { addWorktree, changedFiles, removeWorktree, repoRoot, resolveRef } from './git.mjs';
+import { changedFiles, repoRoot, resolveRef } from './git.mjs';
 import { renderHtml } from './report/html.mjs';
 import { buildReport } from './report/json.mjs';
 import { buildScreens, parseAuthorList } from './screens.mjs';
-import { startServer, warmUp } from './server.mjs';
+import { warmUp } from './server.mjs';
+import { startSides } from './sides.mjs';
 import { treeFromGit } from './tree.mjs';
 import { log, run as exec } from './util.mjs';
 
@@ -59,51 +60,9 @@ export async function runup(opts) {
   const cuts = planCuts(screens, config, { devices: opts.devices !== false });
   log(`${cuts.length} cuts planned`);
 
-  const servers = [];
-  const worktrees = [];
-  let cleaned = false;
-  const cleanup = async () => {
-    if (cleaned) return;
-    cleaned = true;
-    await Promise.all(servers.map((s) => s.stop()));
-    if (!opts.keepWorktrees) await Promise.all(worktrees.map((w) => removeWorktree(root, w)));
-  };
-  const onSignal = () => {
-    log('interrupted, cleaning up');
-    cleanup().finally(() => process.exit(130));
-  };
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
-
   const started = Date.now();
+  const { baseUrl, headUrl, servers, cleanup } = await startSides({ root, config, baseSha, headSha, opts, logDir: path.join(reportDir, 'logs') });
   try {
-    let baseUrl = opts.baseUrl;
-    let headUrl = opts.headUrl;
-    if (!baseUrl || !headUrl) {
-      const wtRoot = config.server.worktreeDir
-        ? path.resolve(root, config.server.worktreeDir)
-        : path.join(path.dirname(root), '.runup-worktrees', path.basename(root));
-      const sides = [
-        ['base', baseSha, baseUrl],
-        ['head', headSha, headUrl],
-      ].filter(([, , url]) => !url);
-      const handles = await Promise.all(
-        sides.map(async ([side, sha]) => {
-          const dir = path.join(wtRoot, `${side}-${short(sha)}`);
-          const wt = await addWorktree(root, dir, sha);
-          worktrees.push(dir);
-          if (wt.reused) log(`${side}: reusing kept worktree ${dir} (setup skipped)`);
-          const handle = await startServer({ side, dir, repo: root, server: config.server, logDir: path.join(reportDir, 'logs'), skipSetup: wt.reused });
-          servers.push(handle);
-          return handle;
-        }),
-      );
-      for (const h of handles) {
-        if (h.side === 'base') baseUrl = h.url;
-        else headUrl = h.url;
-      }
-    }
-
     if (config.capture.warmup) {
       log('warming up routes');
       await Promise.all([warmUp(baseUrl, screens.map((s) => s.path)), warmUp(headUrl, screens.map((s) => s.path))]);
@@ -125,8 +84,6 @@ export async function runup(opts) {
     });
   } finally {
     await cleanup();
-    process.off('SIGINT', onSignal);
-    process.off('SIGTERM', onSignal);
   }
 
   await compareCuts(cuts, { reportDir, compare: config.compare, keepAll: opts.keepAll });

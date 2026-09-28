@@ -55,6 +55,7 @@ runup origin/main HEAD -e '/en/blog/[slug]' -e /en
 runup origin/main HEAD --plan                # just print which screens would be checked
 runup origin/main HEAD --no-devices          # viewports only
 runup origin/main HEAD --base-url http://127.0.0.1:3001 --head-url http://127.0.0.1:3002
+runup live origin/main HEAD                  # both versions live, side by side (see below)
 ```
 
 | Option | |
@@ -85,6 +86,46 @@ Put a fenced `runup` block in the PR body. Paths, route patterns and globs all w
 ````
 
 Screens in the list are always checked. A screen that changed but is not in the list is reported as an **unexpected change**. Without a list, nothing is flagged as unexpected, and the report says so.
+
+## Live: both versions side by side
+
+```sh
+runup live origin/main HEAD
+```
+
+```
+runup live: http://localhost:4545/
+ssh -L 4545:127.0.0.1:4545 <this host>   # then open http://localhost:4545/
+diff boxes: from the report for these commits
+```
+
+![runup live on the example app](docs/live-demo.gif)
+
+`runup live` starts the same two worktree servers as a report run (same setup, seed and env), puts a small proxy in front of each, and serves one compare page on one port. What you do in one pane happens in the other:
+
+- **Mirrored:** scroll (page and scrollable elements), clicks, text input and selects, keys (Escape, Enter, arrows …), and route changes (links, `pushState`, back/forward). A click is matched by element path first (id, `data-testid`, then position among siblings); if the other side has no such element it falls back to the same spot on screen when there is an element of the same kind there (**by position**), and otherwise shows **not found**. Both are change signals, listed in the mirror log.
+- **Route changes** the other side did not follow (a redirect only one version does) show **route differs**.
+- **Device sizes:** phone, tablet and desktop presets plus the config's widths and device profiles. The pane gets the preset's size, user agent (request header and `navigator.userAgent`) and `devicePixelRatio`.
+- **Overlay:** head over base with an opacity slider.
+- **Changed screens:** the screens from the diff (and the author's list) with their states; one click moves both panes there and applies the state's `query` and `steps`.
+- **Diff boxes:** when a report for the same commits exists (the default `.runup/<base7>-<head7>/`, or `--report`), its boxes for the current screen, state and size are drawn over the live panes and follow scrolling.
+- **Same clock:** pages start at `capture.freezeTime` and tick from there (`--real-clock` to turn off).
+- **Cross-origin iframes** (video embeds, payment widgets) cannot be mirrored; they are marked **controlled separately**.
+
+Local only: the proxy removes `X-Frame-Options` and the CSP `frame-ancestors` directive so the pages can be framed, rewrites Host/Origin to the app server, and passes WebSocket upgrades (HMR) through. The app and its responses elsewhere are unchanged. It listens on 127.0.0.1.
+
+The panes are `http://base.localhost:<port>` and `http://head.localhost:<port>`, so one port and one SSH tunnel are enough in Chrome, Edge and Firefox. For browsers that do not resolve `*.localhost`, use `--split-ports` (base on `<port>+1`, head on `<port>+2`, three tunnels).
+
+| Live option | |
+|---|---|
+| `--port <n>` | compare page port (default: config `live.port`, 4545) |
+| `--report <path>` | report folder or `report.json` for diff boxes |
+| `--split-ports` | serve the panes on their own ports |
+| `--real-clock` | do not start page clocks at `capture.freezeTime` |
+
+Config: `live: { port: 4545, host: '127.0.0.1', hosts: 'subdomain' | 'ports', freezeClock: true }`.
+
+Limits: replayed events are synthetic, so browser defaults that need a real gesture (Tab focus moves, native select popups, file pickers, drag and drop) happen only in the pane you touch. States defined with `run` or `localStorage` are only partly replayed (marked `*`). Color scheme follows your OS. `devicePixelRatio` is set for scripts; CSS resolution media queries follow your screen.
 
 ## Config
 
@@ -178,8 +219,9 @@ ssh -L 8765:127.0.0.1:8765 <host>   # then open http://localhost:8765
 
 ```sh
 npm run lint
-npm test            # unit tests: screen discovery, diff selection, screens, config
-npm run test:e2e    # runs the CLI on examples/mini-app in a temporary git repo (needs Chromium)
+npm test            # unit tests: screen discovery, diff selection, screens, config, live proxy
+npm run test:e2e    # the CLI and `runup live` on examples/mini-app in a temporary git repo (needs Chromium)
+node scripts/record-demo.mjs   # re-record docs/live-demo.gif from the example app (needs ffmpeg)
 ```
 
 `examples/mini-app` is a zero-dependency app that follows App Router file conventions (`page.html`, `layout.html`, `(group)`, `[param]`, `_private`), so the whole pipeline can run in CI without Next.js.
@@ -193,7 +235,8 @@ Not in the MVP:
 - Component-level isolation (Storybook-style stories)
 - Accessibility checks (axe)
 - Frameworks other than Next.js App Router (Pages Router, Remix, Vite routes)
-- Re-shooting noisy cuts to drop flaky diffs automatically
+- Live view: sharing a test login session between base and head (SUPERVISOR decision)
+- Live view: opening head on a real phone (needs a private network such as Tailscale; an "open on phone" QR code later; SUPERVISOR decision)
 
 ## License
 
