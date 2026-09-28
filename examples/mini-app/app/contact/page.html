@@ -1,0 +1,35 @@
+<h1>Contact</h1>
+<p>Tell us something. This page exercises <code>runup live</code>: a form, a toggle, a link, a long page and an embed.</p>
+<form id="contact-form" class="card" onsubmit="return false">
+  <p><label>Name <input id="name" name="name" autocomplete="off"></label></p>
+  <p><label>Topic
+    <select id="topic" name="topic">
+      <option value="hello">Hello</option>
+      <option value="bug">Bug report</option>
+      <option value="idea">Idea</option>
+    </select></label></p>
+  <p id="echo">Hello, stranger.</p>
+  <p><button type="button" id="toggle">Show details</button> <button type="button" class="extra">Extra</button></p>
+  <p id="details" hidden>Details are visible.</p>
+  <p><button type="button" id="star" aria-label="Star"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1l2 5h5l-4 3 2 6-5-4-5 4 2-6-4-3h5z" fill="currentColor"/></svg></button> <span id="stars">0 stars</span></p>
+</form>
+<p><a id="about-link" href="/about">About us</a></p>
+<iframe title="partner embed" src="https://example.com/" style="width:100%;height:120px;border:1px solid #8886"></iframe>
+<section class="tall">
+  <h2>More</h2>
+  <p>Scroll down.</p>
+  <div style="height:1600px;background:linear-gradient(#8881,#8883)"></div>
+  <p id="bottom">The end.</p>
+</section>
+<script>
+  const name = document.getElementById('name');
+  const topic = document.getElementById('topic');
+  const echo = () => { document.getElementById('echo').textContent = 'Hello, ' + (name.value || 'stranger') + ' (' + topic.value + ').'; };
+  name.addEventListener('input', echo);
+  topic.addEventListener('change', echo);
+  let stars = 0;
+  document.getElementById('star').addEventListener('click', () => { stars++; document.getElementById('stars').textContent = stars + ' stars'; });
+  document.querySelector('#contact-form button[type=button]').addEventListener('click', () => {
+    document.getElementById('details').hidden = !document.getElementById('details').hidden;
+  });
+</script>

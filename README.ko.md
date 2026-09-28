@@ -55,6 +55,7 @@ runup origin/main HEAD -e '/en/blog/[slug]' -e /en
 runup origin/main HEAD --plan                # 검사할 화면만 출력
 runup origin/main HEAD --no-devices          # 뷰포트만
 runup origin/main HEAD --base-url http://127.0.0.1:3001 --head-url http://127.0.0.1:3002
+runup live origin/main HEAD                  # 두 버전을 실시간으로 나란히(아래 참고)
 ```
 
 | 옵션 | |
@@ -85,6 +86,51 @@ PR 본문에 `runup` 코드 블록을 둔다. 경로, route 패턴, glob 모두 
 ````
 
 목록의 화면은 항상 검사한다. 바뀌었는데 목록에 없는 화면은 **예상 밖 변경**으로 보고한다. 목록이 없으면 예상 밖 변경을 판정하지 않고, 보고서에 그렇게 적는다.
+
+## 라이브: 두 버전을 나란히
+
+```sh
+runup live origin/main HEAD
+```
+
+```
+runup live: http://localhost:4545/
+ssh -L 4545:127.0.0.1:4545 <this host>   # then open http://localhost:4545/
+diff boxes: from the report for these commits
+```
+
+![예제 앱에서 runup live](docs/live-demo.gif)
+
+`runup live`는 보고서 실행과 같은 worktree 서버 두 대(같은 setup·seed·env)를 띄우고, 각각 앞에 작은 프록시를 두고, 포트 하나에서 비교 화면을 연다. 한쪽 창에서 한 일이 다른 쪽에서도 일어난다.
+
+- **복제:** 스크롤(페이지와 스크롤되는 요소), 클릭, 글자 입력과 select, 키(Escape, Enter, 방향키 …), route 이동(링크, `pushState`, 뒤로·앞으로). 클릭은 요소 경로(id, `data-testid`, 형제 중 순서)로 먼저 찾고, 다른 쪽에 그 요소가 없으면 같은 자리에 같은 종류의 요소가 있을 때 그것을 누른다(**by position**). 그것도 없으면 **not found**를 표시한다. 둘 다 변경 신호이고 복제 기록에 남는다.
+- 다른 쪽이 따라가지 못한 **route 이동**(한 버전만 하는 리디렉션 등)은 **route differs**로 표시한다.
+- **기기 크기:** 폰·태블릿·데스크톱 프리셋과 설정의 폭·기기 프로필. 창은 프리셋의 크기, user agent(요청 헤더와 `navigator.userAgent`), `devicePixelRatio`를 받는다.
+- **겹쳐 보기:** head를 base 위에 두고 투명도 슬라이더로 조절한다.
+- **바뀐 화면:** diff(와 작성자 목록)에서 찾은 화면과 상태. 누르면 두 창이 함께 그 화면으로 가서 상태의 `query`와 `steps`를 적용한다.
+- **diff 상자:** 같은 커밋의 보고서가 있으면(기본 `.runup/<base7>-<head7>/` 또는 `--report`) 지금 화면·상태·크기에 맞는 상자를 실시간 화면 위에 그리고, 스크롤을 따라 움직인다.
+- **같은 시계:** 페이지 시계는 `capture.freezeTime`에서 시작해 흐른다(`--real-clock`으로 끈다).
+- **다른 도메인 iframe**(영상 삽입, 결제 위젯)은 복제할 수 없어 **따로 조작(controlled separately)**으로 표시한다.
+
+로컬 전용: 프록시는 창에 넣을 수 있도록 `X-Frame-Options`와 CSP `frame-ancestors`만 빼고, Host/Origin을 앱 서버 기준으로 바꾸며, WebSocket(HMR)은 그대로 통과시킨다. 앱과 다른 곳의 응답은 바뀌지 않는다. 127.0.0.1에서만 듣는다.
+
+그래서 함께 두는 보호 장치:
+- **Host 이름:** `localhost`, `127.0.0.1`, `base.localhost`, `head.localhost`에만 답한다(포트는 따지지 않으므로 터널이 다른 로컬 포트를 써도 된다). DNS rebinding으로 들어온 이름을 포함해 나머지는 WebSocket upgrade까지 `421`로 거절한다.
+- **메시지:** 넣은 스크립트는 비교 페이지 출처에서 온 명령만 따르고 그 출처로만 보고한다. 다른 사이트가 창을 iframe으로 넣어도 조작하거나 입력값을 볼 수 없다.
+- **비교 페이지:** iframe으로 넣을 수 없고, preset 변경은 비교 페이지 자신에게서만 받는다.
+
+창 주소는 `http://base.localhost:<port>`와 `http://head.localhost:<port>`라서 Chrome·Edge·Firefox에서는 포트 하나, SSH 터널 하나면 된다. `*.localhost`를 풀지 못하는 브라우저에서는 `--split-ports`(base는 `<port>+1`, head는 `<port>+2`, 터널 세 개)를 쓴다.
+
+| 라이브 옵션 | |
+|---|---|
+| `--port <n>` | 비교 화면 포트(기본: 설정 `live.port`, 4545) |
+| `--report <path>` | diff 상자에 쓸 보고서 폴더나 `report.json` |
+| `--split-ports` | 창마다 포트를 따로 쓴다 |
+| `--real-clock` | 페이지 시계를 `capture.freezeTime`에서 시작하지 않는다 |
+
+설정: `live: { port: 4545, host: '127.0.0.1', hosts: 'subdomain' | 'ports', freezeClock: true }`.
+
+한계: 복제한 이벤트는 합성 이벤트라서 실제 동작이 필요한 브라우저 기본 동작(Tab 포커스 이동, 기본 select 팝업, 파일 선택, 드래그 앤 드롭)은 직접 만진 창에서만 일어난다. `run`이나 `localStorage`로 정의한 상태는 일부만 재현한다(`*` 표시). 색 모드는 OS를 따른다. `devicePixelRatio`는 스크립트에만 적용되고 CSS 해상도 미디어 쿼리는 실제 화면을 따른다.
 
 ## 설정
 
@@ -118,8 +164,9 @@ ssh -L 8765:127.0.0.1:8765 <host>   # http://localhost:8765 열기
 
 ```sh
 npm run lint
-npm test            # 단위 테스트: 화면 찾기, diff 선택, 화면 목록, 설정
-npm run test:e2e    # examples/mini-app을 임시 git 저장소에서 CLI로 끝까지 실행(Chromium 필요)
+npm test            # 단위 테스트: 화면 찾기, diff 선택, 화면 목록, 설정, 라이브 프록시
+npm run test:e2e    # examples/mini-app을 임시 git 저장소에서 CLI와 `runup live`로 끝까지 실행(Chromium 필요)
+node scripts/record-demo.mjs   # 예제 앱으로 docs/live-demo.gif를 다시 녹화(ffmpeg 필요)
 ```
 
 `examples/mini-app`은 App Router 파일 규칙(`page.html`, `layout.html`, `(group)`, `[param]`, `_private`)을 따르는 의존성 없는 앱이라, Next.js 없이 CI에서 전체 흐름을 돌릴 수 있다.
@@ -133,6 +180,8 @@ MVP 밖:
 - 컴포넌트 단위 격리(Storybook 방식)
 - 접근성 검사(axe)
 - Next.js App Router 외 프레임워크(Pages Router, Remix, Vite 라우트)
+- 라이브: base와 head에 테스트 로그인 세션 공유(SUPERVISOR 결정)
+- 라이브: 실제 폰에서 head 열기(Tailscale 같은 사설망 필요, "폰으로 열기" QR은 나중. SUPERVISOR 결정)
 
 ## 라이선스
 
