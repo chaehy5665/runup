@@ -71,7 +71,7 @@ function upstreamHeaders(headers, { target, proxyOrigin, userAgent }) {
  * @param {object} args
  * @param {'base'|'head'} args.side
  * @param {string} args.target   upstream origin, e.g. http://127.0.0.1:3001
- * @param {() => string} args.agentScript  JS source of the agent for this side (served at AGENT_PATH)
+ * @param {(req: http.IncomingMessage) => string} args.agentScript  JS source of the agent for this side and request (served at AGENT_PATH)
  * @param {() => string|undefined} [args.userAgent] current user agent override
  */
 export function createSideProxy({ side, target: targetUrl, agentScript, userAgent = () => undefined }) {
@@ -81,7 +81,7 @@ export function createSideProxy({ side, target: targetUrl, agentScript, userAgen
     const url = new URL(req.url, 'http://x');
     if (url.pathname === AGENT_PATH) {
       res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(agentScript());
+      res.end(agentScript(req));
       return;
     }
     const proxyOrigin = req.headers.host ? `http://${req.headers.host}` : null;
@@ -121,7 +121,7 @@ export function createSideProxy({ side, target: targetUrl, agentScript, userAgen
           // without a nonce only allows same-origin files, so fall back to the served agent there.
           const tag = blocksInline(csp) && !nonce
             ? `<script src="${AGENT_PATH}?side=${side}" data-runup-agent></script>`
-            : `<script data-runup-agent${nonceAttr}>${agentScript().replace(/<\/(script)/gi, '<\\/$1')}</script>`;
+            : `<script data-runup-agent${nonceAttr}>${agentScript(req).replace(/<\/(script)/gi, '<\\/$1')}</script>`;
           const body = Buffer.from(injectAgent(Buffer.concat(chunks).toString('utf8'), tag));
           delete out['content-length'];
           delete out['content-encoding'];

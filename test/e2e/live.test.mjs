@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -132,6 +133,87 @@ describe('runup live on the example app', { skip: !(await chromiumAvailable()) &
     assert.match(res.headers['content-security-policy'] ?? '', /default-src 'self'/);
     // The example's CSP (default-src 'self' 'unsafe-inline') allows inline scripts: the agent is inlined at the end of <head>.
     assert.match(res.body, /<script data-runup-agent>window\.__RUNUP__=\{"side":"head"[\s\S]*<\/script>\s*<\/head>/);
+  });
+
+  const raw = (host, { method = 'GET', path: p = '/', body, headers = {} } = {}) =>
+    new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: live.port, method, path: p, headers: { host, ...headers } }, (r) => {
+        let text = '';
+        r.on('data', (c) => (text += c));
+        r.on('end', () => resolve({ status: r.statusCode, headers: r.headers, body: text }));
+      });
+      req.on('error', reject);
+      req.end(body);
+    });
+
+  it('tells the agent the compare page origins it may talk to', async () => {
+    const res = await raw(`head.localhost:${live.port}`, { path: '/contact' });
+    assert.ok(res.body.includes(`"parents":["http://localhost:${live.port}","http://127.0.0.1:${live.port}"]`));
+  });
+
+  it('refuses other host names, WebSocket upgrades included', async () => {
+    for (const host of [`base.attacker.example:${live.port}`, `head.attacker.example:${live.port}`, `attacker.example:${live.port}`]) {
+      assert.equal((await raw(host, { path: '/contact' })).status, 421, host);
+    }
+    assert.equal((await raw(`127.0.0.1:${live.port}`, { path: '/__runup/state.json' })).status, 200);
+    const upgrade = (host) =>
+      new Promise((resolve, reject) => {
+        const sock = net.connect(live.port, '127.0.0.1', () =>
+          sock.write(`GET /hmr HTTP/1.1\r\nHost: ${host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`),
+        );
+        let text = '';
+        sock.on('data', (d) => (text += d));
+        sock.on('close', () => resolve(text));
+        sock.on('error', reject);
+      });
+    assert.match(await upgrade(`base.attacker.example:${live.port}`), /^HTTP\/1\.1 421 /);
+  });
+
+  it('answers a malformed preset request with 400 and keeps running', async () => {
+    const host = `localhost:${live.port}`;
+    const bad = await raw(host, { method: 'POST', path: '/__runup/preset', body: '{not json', headers: { 'content-type': 'text/plain' } });
+    assert.equal(bad.status, 400);
+    assert.equal((await raw(host, { path: '/__runup/state.json' })).status, 200);
+    // A form posted from another site cannot change the preset.
+    const id = JSON.parse((await raw(host, { path: '/__runup/state.json' })).body).presets[1].id;
+    const cross = await raw(host, { method: 'POST', path: '/__runup/preset', body: JSON.stringify({ id }), headers: { origin: 'http://attacker.example' } });
+    assert.equal(cross.status, 403);
+    // The compare page itself cannot be framed.
+    const ui = await raw(host);
+    assert.equal(ui.headers['x-frame-options'], 'DENY');
+    assert.match(ui.headers['content-security-policy'], /frame-ancestors 'none'/);
+  });
+
+  it('ignores a page on another origin that frames a pane, and tells it nothing', async () => {
+    const hostile = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><script>
+        window.__msgs = [];
+        addEventListener('message', (e) => window.__msgs.push(e.data));
+      </script><iframe id="f" src="http://head.localhost:${live.port}/contact" width="800" height="600"></iframe>`);
+    });
+    await new Promise((r) => hostile.listen(0, '127.0.0.1', r));
+    const other = await browser.newPage();
+    try {
+      await other.goto(`http://localhost:${hostile.address().port}/`);
+      const pane = await until(() => other.frames().find((f) => f.url().startsWith(`http://head.localhost:${live.port}/contact`)), { message: 'framed pane' });
+      await until(() => pane.evaluate(() => window.__runupAgent === true && document.readyState === 'complete'), { message: 'agent in the framed pane' });
+      // Orders from the framing page are not obeyed.
+      await other.evaluate(() => {
+        const w = document.getElementById('f').contentWindow;
+        w.postMessage({ runup: 1, type: 'steps', steps: [{ fill: ['#name', 'pwned by steps'] }] }, '*');
+        w.postMessage({ runup: 1, type: 'apply', id: 1, event: { kind: 'input', path: '#name', value: 'pwned' } }, '*');
+      });
+      // What the person types is not reported to it either.
+      await pane.locator('#name').pressSequentially('secret', { delay: 20 });
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(await pane.locator('#name').inputValue(), 'secret');
+      assert.deepEqual(await other.evaluate(() => window.__msgs), []);
+    } finally {
+      await other.close();
+      hostile.closeAllConnections();
+      await new Promise((r) => hostile.close(r));
+    }
   });
 
   it('mirrors typing into the other pane', async () => {

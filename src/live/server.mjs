@@ -8,6 +8,7 @@ import { plan } from '../run.mjs';
 import { warmUp } from '../server.mjs';
 import { startSides } from '../sides.mjs';
 import { log } from '../util.mjs';
+import { classifyHost, compareOrigins } from './hosts.mjs';
 import { createSideProxy } from './proxy.mjs';
 import { renderUi } from './ui.mjs';
 
@@ -63,8 +64,9 @@ async function loadReport(file, baseSha, headSha) {
 
 /**
  * Start `runup live`: both app servers, a proxy per side and the compare page, all behind one port.
- * Hosts `base.localhost:<port>` and `head.localhost:<port>` reach the two apps; any other host gets the
- * compare page. With `hosts: 'ports'` the sides listen on <port>+1 and <port>+2 instead.
+ * Hosts `base.localhost:<port>` and `head.localhost:<port>` reach the two apps; `localhost` and `127.0.0.1`
+ * get the compare page, and any other host is refused (see hosts.mjs). With `hosts: 'ports'` the sides
+ * listen on <port>+1 and <port>+2 instead.
  */
 export async function startLive(opts) {
   const p = await plan(opts);
@@ -120,8 +122,9 @@ export async function startLive(opts) {
   const agentSource = await fs.readFile(agentFile, 'utf8');
   const freezeTime = live.freezeClock && !opts.realClock ? config.capture.freezeTime : null;
 
-  const agentScript = (side) => () =>
-    `window.__RUNUP__=${JSON.stringify({ side, freezeTime, dpr: preset.dpr, userAgent: preset.userAgent ?? null, labels: { separate: 'controlled separately · 따로 조작' } })};\n${agentSource}`;
+  // `parents` are the only origins the agent takes orders from and reports to: the compare page.
+  const agentScript = (side) => (req) =>
+    `window.__RUNUP__=${JSON.stringify({ side, parents: compareOrigins(req.headers.host, { hosts, uiPort: port }), freezeTime, dpr: preset.dpr, userAgent: preset.userAgent ?? null, labels: { separate: 'controlled separately · 따로 조작' } })};\n${agentSource}`;
   const proxies = {
     base: createSideProxy({ side: 'base', target: sides.baseUrl, agentScript: agentScript('base'), userAgent: () => preset.userAgent }),
     head: createSideProxy({ side: 'head', target: sides.headUrl, agentScript: agentScript('head'), userAgent: () => preset.userAgent }),
@@ -145,7 +148,8 @@ export async function startLive(opts) {
   function uiHandler(req, res) {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/' || url.pathname === '/index.html') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      // The panes may be framed by anything (the proxy drops their frame headers); the compare page may not.
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'content-security-policy': "frame-ancestors 'none'" });
       return res.end(renderUi());
     }
     if (url.pathname === '/__runup/state.json') {
@@ -153,10 +157,21 @@ export async function startLive(opts) {
       return res.end(JSON.stringify(state()));
     }
     if (url.pathname === '/__runup/preset' && req.method === 'POST') {
+      // Only the compare page changes the preset; a form posted from another site is refused.
+      if (req.headers.origin && !compareOrigins(req.headers.host, { hosts, uiPort: port }).includes(req.headers.origin)) {
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        return res.end('forbidden');
+      }
       let body = '';
       req.on('data', (c) => (body += c));
       req.on('end', () => {
-        const next = presets.find((x) => x.id === JSON.parse(body || '{}').id);
+        let id;
+        try {
+          id = JSON.parse(body || '{}')?.id;
+        } catch {
+          id = undefined;
+        }
+        const next = presets.find((x) => x.id === id);
         if (next) preset = next;
         res.writeHead(next ? 200 : 400, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ preset: preset.id }));
@@ -167,12 +182,17 @@ export async function startLive(opts) {
     return res.end('not found');
   }
 
-  const sideOfHost = (host) => {
-    const name = String(host ?? '').split(':')[0];
-    if (name.startsWith('base.')) return 'base';
-    if (name.startsWith('head.')) return 'head';
-    return null;
+  const refuse = (res) => {
+    res.writeHead(421, { 'content-type': 'text/plain' });
+    res.end('runup live answers only localhost, 127.0.0.1, base.localhost and head.localhost');
   };
+  const refuseUpgrade = (socket) => {
+    socket.end('HTTP/1.1 421 Misdirected Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+  };
+  // Split ports: each server takes only the plain loopback names.
+  const onlyLoopback = (handler) => (req, res) => (classifyHost(req.headers.host, 'ports') === 'ui' ? handler(req, res) : refuse(res));
+  const onlyLoopbackUpgrade = (handler) => (req, socket, head) =>
+    classifyHost(req.headers.host, 'ports') === 'ui' ? handler(req, socket, head) : refuseUpgrade(socket);
 
   const servers = [];
   const listen = (handler, upgrade, p2) =>
@@ -186,19 +206,21 @@ export async function startLive(opts) {
 
   try {
     if (hosts === 'ports') {
-      await listen(uiHandler, null, port);
-      await listen(proxies.base.handleRequest, proxies.base.handleUpgrade, port + 1);
-      await listen(proxies.head.handleRequest, proxies.head.handleUpgrade, port + 2);
+      await listen(onlyLoopback(uiHandler), null, port);
+      await listen(onlyLoopback(proxies.base.handleRequest), onlyLoopbackUpgrade(proxies.base.handleUpgrade), port + 1);
+      await listen(onlyLoopback(proxies.head.handleRequest), onlyLoopbackUpgrade(proxies.head.handleUpgrade), port + 2);
     } else {
       await listen(
         (req, res) => {
-          const side = sideOfHost(req.headers.host);
-          return side ? proxies[side].handleRequest(req, res) : uiHandler(req, res);
+          const to = classifyHost(req.headers.host);
+          if (!to) return refuse(res);
+          return to === 'ui' ? uiHandler(req, res) : proxies[to].handleRequest(req, res);
         },
         (req, socket, head) => {
-          const side = sideOfHost(req.headers.host);
-          if (side) proxies[side].handleUpgrade(req, socket, head);
-          else socket.destroy();
+          const to = classifyHost(req.headers.host);
+          if (to === 'base' || to === 'head') proxies[to].handleUpgrade(req, socket, head);
+          else if (to === 'ui') socket.destroy();
+          else refuseUpgrade(socket);
         },
         port,
       );

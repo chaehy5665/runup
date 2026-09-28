@@ -33,11 +33,17 @@
   var framed = window.parent !== window;
   if (!framed) return;
   var side = cfg.side;
+  // The compare page's possible origins. Anything else that frames this page gets nothing and is not obeyed:
+  // the proxy lets any page frame the app, and messages carry what is typed and can run code here.
+  var parents = cfg.parents || [];
 
   function post(msg) {
     msg.runup = 1;
     msg.side = side;
-    try { window.parent.postMessage(msg, '*'); } catch (e) { /* parent gone */ }
+    // A message posted to an origin the parent does not have is dropped by the browser.
+    for (var i = 0; i < parents.length; i++) {
+      try { window.parent.postMessage(msg, parents[i]); } catch (e) { /* parent gone */ }
+    }
   }
 
   // ---- element paths ------------------------------------------------------------------------------
@@ -318,7 +324,7 @@
 
   window.addEventListener('message', function (e) {
     var m = e.data;
-    if (!m || m.runup !== 1 || e.source !== window.parent) return;
+    if (!m || m.runup !== 1 || e.source !== window.parent || parents.indexOf(e.origin) === -1) return;
     if (m.type === 'apply') {
       var res;
       try { res = apply(m.event); } catch (err) { res = { status: 'error', label: String(err && err.message || err).slice(0, 80) }; }

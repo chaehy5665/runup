@@ -114,6 +114,11 @@ diff boxes: from the report for these commits
 
 Local only: the proxy removes `X-Frame-Options` and the CSP `frame-ancestors` directive so the pages can be framed, rewrites Host/Origin to the app server, and passes WebSocket upgrades (HMR) through. The app and its responses elsewhere are unchanged. It listens on 127.0.0.1.
 
+Guards that come with that:
+- **Host names:** only `localhost`, `127.0.0.1`, `base.localhost` and `head.localhost` are answered (any port, so a tunnel can use another local port). Anything else, a DNS-rebound name included, gets `421`, WebSocket upgrades too.
+- **Messages:** the injected script takes orders only from the compare page's origin and reports only to it. Another site that frames a pane can neither drive it nor see what is typed there.
+- **Compare page:** it cannot be framed, and it takes preset changes only from itself.
+
 The panes are `http://base.localhost:<port>` and `http://head.localhost:<port>`, so one port and one SSH tunnel are enough in Chrome, Edge and Firefox. For browsers that do not resolve `*.localhost`, use `--split-ports` (base on `<port>+1`, head on `<port>+2`, three tunnels).
 
 | Live option | |

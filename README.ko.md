@@ -114,6 +114,11 @@ diff boxes: from the report for these commits
 
 로컬 전용: 프록시는 창에 넣을 수 있도록 `X-Frame-Options`와 CSP `frame-ancestors`만 빼고, Host/Origin을 앱 서버 기준으로 바꾸며, WebSocket(HMR)은 그대로 통과시킨다. 앱과 다른 곳의 응답은 바뀌지 않는다. 127.0.0.1에서만 듣는다.
 
+그래서 함께 두는 보호 장치:
+- **Host 이름:** `localhost`, `127.0.0.1`, `base.localhost`, `head.localhost`에만 답한다(포트는 따지지 않으므로 터널이 다른 로컬 포트를 써도 된다). DNS rebinding으로 들어온 이름을 포함해 나머지는 WebSocket upgrade까지 `421`로 거절한다.
+- **메시지:** 넣은 스크립트는 비교 페이지 출처에서 온 명령만 따르고 그 출처로만 보고한다. 다른 사이트가 창을 iframe으로 넣어도 조작하거나 입력값을 볼 수 없다.
+- **비교 페이지:** iframe으로 넣을 수 없고, preset 변경은 비교 페이지 자신에게서만 받는다.
+
 창 주소는 `http://base.localhost:<port>`와 `http://head.localhost:<port>`라서 Chrome·Edge·Firefox에서는 포트 하나, SSH 터널 하나면 된다. `*.localhost`를 풀지 못하는 브라우저에서는 `--split-ports`(base는 `<port>+1`, head는 `<port>+2`, 터널 세 개)를 쓴다.
 
 | 라이브 옵션 | |

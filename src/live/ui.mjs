@@ -97,7 +97,8 @@ function load(path) {
 }
 function post(side, msg) {
   msg.runup = 1;
-  activeFrames()[side].contentWindow?.postMessage(msg, '*');
+  // Addressed to the side's origin, so a pane that has navigated off the app never receives it.
+  activeFrames()[side].contentWindow?.postMessage(msg, originOf(side));
 }
 function sideOf(source) {
   const f = activeFrames();
@@ -245,8 +246,8 @@ window.addEventListener('message', (e) => {
   if (!m || m.runup !== 1) return;
   // A pane that is navigating away still delivers its last messages (the click on a link), but with a null
   // source; its origin still tells the sides apart.
-  const side = e.source ? sideOf(e.source) : sides.includes(m.side) && e.origin === originOf(m.side) ? m.side : null;
-  if (!side || side !== m.side) return;
+  const side = e.source ? sideOf(e.source) : sides.includes(m.side) ? m.side : null;
+  if (!side || side !== m.side || e.origin !== originOf(side)) return;
   const other = side === 'base' ? 'head' : 'base';
   if (m.type === 'active') leader = side;
   else if (m.type === 'ready' || m.type === 'nav') {
